@@ -1,0 +1,353 @@
+---
+title: "BST691 Final Project"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+#load the data
+#There are no missing values
+```{r}
+#sky<-read.csv(file="C:/Users/rxy114/Dropbox/UM Biostatistics/BST691 High Dimensional and Complex Data/Final #Project/skyserver.csv")
+sky<-read.csv(file="/Users/ruijieyin/Dropbox/UM Biostatistics/BST691 High Dimensional and Complex Data/Final Project/skyserver.csv")
+set.seed(20190508)
+#calculate the ratio of classes in the original dataset
+GALAXY<-sky[sky$class=="GALAXY",]
+QSO<-sky[sky$class=="QSO",]
+STAR<-sky[sky$class=="STAR",]
+
+#Approximately, galaxy=5000,star=4150,QSO=850
+#ratio=5000:4150:850
+
+#should drop 'objid', 'specobjid', 'run', 'rerun', 'camcol', 'plate', 'mjd', 'fiberid', 'field'
+#only nine predictors left
+sky<-subset(sky, select = -c(objid,specobjid,rerun,mjd,fiberid,plate,run,camcol))
+```
+
+
+#EDA
+#see correlations between continuous variables
+```{r}
+#The plot is not obvious
+pairs(cor(sky[,c(1:8,10)]))
+#but the correlation matrix is obvious
+cor(sky[,c(1:8,10)])
+# shows g, r, i, z are highly correlated
+```
+
+
+#need to perform PCA to combine g, r, i, z
+```{r}
+sky.pca<-prcomp(sky[,4:7],center=TRUE, scale=FALSE)
+summary(sky.pca)
+#the 1st principle component already explained 96% of the variation
+#extract the loadings
+sky.pca.loadings<-as.data.frame(sky.pca$rotation[,1])
+#extract the scores
+sky.pca.scores<-as.data.frame(sky.pca$x[,1])
+#generate new data
+sky.new<-cbind(sky[,c(1:3,8:10)],sky.pca.scores)
+
+#generate a var explained
+#compute standard deviation of each principal component
+std_dev<-sky.pca$sdev
+
+#compute variance
+pr_var<-std_dev^2
+
+#proportion of variance explained
+prop_varex<-pr_var/sum(pr_var)
+
+
+plot(prop_varex, xlab = "Principal Component",
+             ylab = "Proportion of Variance Explained",
+             type = "b")
+
+#cumulative scree plot
+plot(cumsum(prop_varex), xlab = "Principal Component",
+              ylab = "Cumulative Proportion of Variance Explained",
+              type = "b")
+
+
+#biplot(sky.pca, scale = 0)
+#not obvious
+```
+
+#80% of the data will be used as test data
+#training data: sky_train
+#Make sure that the proportions of classes are balanced in training and testing dataset
+```{r}
+set.seed(20190508)
+#calculate the traio of classes in the original dataset
+GALAXY<-sky.new[sky.new$class=="GALAXY",]
+QSO<-sky.new[sky.new$class=="QSO",]
+STAR<-sky.new[sky.new$class=="STAR",]
+
+#Approximately, galaxy=5000,star=4150,QSO=850
+#ratio=5000:4150:850
+#split GALAXY into train and test according to its proportion
+galaxy_train_size<-sample(nrow(GALAXY),8000*(5000/10000),replace = FALSE, prob = NULL)
+galaxy_train<-GALAXY[galaxy_train_size,]
+galaxy_test<-GALAXY[-galaxy_train_size,]
+
+qso_train_size<-sample(nrow(QSO),8000*(850/10000),replace = FALSE, prob = NULL)
+qso_train<-QSO[qso_train_size,]
+qso_test<-QSO[-qso_train_size,]
+
+star_train_size<-sample(nrow(STAR),8000*(4150/10000),replace = FALSE, prob = NULL)
+star_train<-STAR[star_train_size,]
+star_test<-STAR[-star_train_size,]
+
+#combine
+sky_train<-rbind(galaxy_train,qso_train,star_train)
+sky_test<-rbind(galaxy_test,qso_test,star_test)
+
+#rename the new variable as coordinates
+colnames(sky_train)[7]<-"coordinates"
+colnames(sky_test)[7]<-"coordinates"
+
+#delete the first column: automated ID number
+#sky_train<-sky_train[,-1]
+#sky_test<-sky_test[,-1]
+```
+
+#save dataset to local drive
+```{r}
+write.csv(sky_train, "C:/Users/rxy114/Dropbox/UM Biostatistics/BST691 High Dimensional and Complex Data/Final Project/sky_train.csv")
+write.csv(sky_test, "C:/Users/rxy114/Dropbox/UM Biostatistics/BST691 High Dimensional and Complex Data/Final Project/sky_test.csv")
+```
+
+
+#read back those data & delete the first column: automated ID number
+```{r}
+sky_train<-read.csv("C:/Users/rxy114/Dropbox/UM Biostatistics/BST691 High Dimensional and Complex Data/Final Project/sky_train.csv")
+sky_test<-read.csv("C:/Users/rxy114/Dropbox/UM Biostatistics/BST691 High Dimensional and Complex Data/Final Project/sky_test.csv")
+#sky<-read.csv("C:/Users/rxy114/Dropbox/UM Biostatistics/BST691 High Dimensional and Complex Data/Final Project/skyserver.csv")
+```
+
+
+#if not reading back, then the following is not necessary:
+```{r}
+sky_train<-sky_train[,-1]
+sky_test<-sky_test[,-1]
+```
+
+
+#Now we generated new training data: sky_train, and testing data: sky_test
+#It's time to apply with the machine learning methods
+#Random Forest
+```{r}
+#reference: https://www.r-bloggers.com/predicting-wine-quality-using-random-forests/
+#install.packages('randomForest')
+library(randomForest)
+#include random seeds, because RF is stochastic.
+set.seed(20190508)
+rf <- randomForest(class ~ ., data = sky_train, ntree= 2500,importance=TRUE)
+#results of training has saved to Dropbox as text
+rf_pred <- predict(rf, newdata = sky_test)
+table(rf_pred, sky_test$class)
+#results of testing has saved to Dropbox as xlsx
+
+#calculate the testing accuracy
+rf_test_accuracy<-(985+151+831)/nrow(sky_test)
+#result=0.9835
+#Note: tried different mtry, testing errors are different, but testing errors are all the same.
+```
+
+#plot trees in the RF
+#not obvious and not necessary, see below for the reason
+#reference: how to plot a representative tree:
+#https://stats.stackexchange.com/questions/41443/how-to-actually-plot-a-sample-tree-from-randomforestgettree
+#the correct way of installing the required packages in the following code:
+```{r}
+install.packages("devtools")
+library(devtools)
+devtools::install_github('araastat/reprtree')
+library(reprtree)
+reprtree:::plot.getTree(rf)
+```
+
+
+#Why not printing a single tree in the RF?
+1.plotting single trees forming RF is nonsense; this is an ensemble classifier, it makes sense only as a whole. But even plotting the whole forest is nonsense -- it is a black-box classifier, so it is not intended to explain the data with its structure, rather to replicate the original process.
+
+
+2.As far as I understand this it is not commonly accepted to plot the trees of random forests. This makes also sense as trees of a random forests are iterations to get optimal predictions. A plot of a single tree of a random forest is a intermediary step and might be misleading therefore. This might also be the reason why a plot functionality is not implemented in ranger.
+
+
+#Instead:
+#plot.randomForest shows how OOB error and in-class OOB error evolved with increasing number of trees
+#for classification, black solid line for overall OOB error
+#a bunch of colour lines, one for each class' error (i.e. 1-this class recall).
+```{r}
+plot(rf, log="y")
+```
+
+
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+
+
+
+
+
+#SVM
+reference: https://medium.com/@ODSC/build-a-multi-class-support-vector-machine-in-r-abcdd4b7dab6
+##can either go with one_vs_one or one_vs_rest
+##e1071 uses one_vs_one at back end.
+#kernel="radial", use default
+#type="C-classification", for classification, use default
+#can experiment with different values of gamma and cost to find the best classification accuracy.
+```{r}
+install.packages("e1071")
+library(e1071)
+
+svm_sky <- svm(class~., data=sky_train, 
+          method="C-classification", kernal="radial")
+
+summary(svm_sky)
+#the result of training have been saved to Dropbox
+
+#to visualize the support vectors, the decision boundary, and the margin for the model
+#The plot helps to visualize a two-dimensional projection of the data (using the predictors) with #class classes (shown in different shadings) and support vectors.
+plot(svm_sky, sky_train, redshift ~ u)
+```
+
+
+#Prediction
+```{r}
+prediction <- predict(svm_sky, sky_test)
+svm_table <- table(sky_test$class, prediction)
+svm_table
+
+
+#calculate the acurracy:
+svm_test_accuracy<-(912+149+826)/nrow(sky_test)
+#result=0.9435
+
+```
+
+
+
+#try SVM for different kernals
+Mention that in the report, here I just used Radial kernal
+
+
+
+
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+
+
+#knn
+#should use cross-validation to find the optimal k
+#reference on choose optimal k in R:
+https://stats.stackexchange.com/questions/318968/knn-and-k-folding-in-r
+```{r}
+#install.packages("caret")
+library(caret)
+#try to find the optimal k
+trctrl <- trainControl(method = "cv", number = 10)
+#"number" parameter holds the number of resampling iterations. The "repeats " parameter contains the complete sets of folds to 
+# compute for our repeated cross-validation. 
+# 10-fold CV
+set.seed(20190508)
+knn_sky <- train(class ~ .,
+             method     = "knn",
+             tuneGrid   = expand.grid(k = 1:10),
+             trControl  = trctrl,
+             metric     = "Accuracy",
+             data       = sky_train)
+
+
+
+
+#results have been saved to Dropbox.
+knn_sky
+
+#the optimal of k=5
+
+plot(knn_sky)
+```
+
+
+#Prediction
+```{r}
+knn_pred <- predict(knn_sky, newdata = sky_test)
+confusionMatrix(knn_pred, sky_test$class )
+
+#results=0.6625
+knn_test_accuracy=0.6625
+```
+
+
+
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+
+
+
+#Logistic Regression
+
+Attempt a one-vs-all (aka one-vs-rest) system of logistic classifiers that proposes your problem as several binary classifiers. That is train multiple binary classifiers--one for each of the 14 classes. You will end up with 14 predictions. The prediction that has the largest one-vs-all is the prediction--take the maximum probability (each classifier's prediction probability ) given by each classifier for each sample as the prediction.
+
+
+#reference:
+https://stats.stackexchange.com/questions/175782/how-to-perform-a-logistic-regression-for-more-than-2-response-classes-in-r
+#combine with:
+http://www.sthda.com/english/articles/36-classification-methods-essentials/147-multinomial-logistic-regression-essentials-in-r/
+
+```{r}
+install.packages("nnet")
+library(nnet)
+# Fit the model
+logistic_sky <- multinom(class ~., data = sky_train)
+# Summarize the model
+summary(logistic_sky)
+# Make predictions
+predict_class<-predict(logistic_sky, sky_test)
+logistic_test_accuracy<-mean(predict_class == sky_test$class)
+
+#generate a confusion matrix
+table(predict_class,sky_test$class)
+#result=0.9805
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
